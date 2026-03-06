@@ -1,0 +1,130 @@
+:root {
+  color-scheme: light;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #f5f6f8;
+  color: #1f2937;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  min-height: 100vh;
+}
+
+.panel {
+  padding: 18px;
+  border-right: 1px solid #e5e7eb;
+  background: #ffffff;
+}
+
+h1 {
+  margin: 0 0 14px;
+  font-size: 20px;
+}
+
+.file-picker {
+  display: inline-block;
+  padding: 10px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  margin-bottom: 14px;
+}
+
+.file-picker input {
+  display: none;
+}
+
+.controls {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.controls label {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.controls input[type="range"] {
+  grid-column: 1 / span 1;
+  width: 100%;
+}
+
+.controls select {
+  grid-column: 1 / span 1;
+  width: 100%;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: #fff;
+}
+
+.controls label > span {
+  grid-column: 2 / span 1;
+  min-width: 42px;
+  text-align: right;
+}
+
+.controls .inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.actions {
+  display: grid;
+  gap: 8px;
+}
+
+button {
+  border: 1px solid #d1d5db;
+  background: #fff;
+  border-radius: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #f8fafc;
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.hint {
+  margin-top: 12px;
+  color: #4b5563;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.canvas-wrap {
+  display: grid;
+  place-items: center;
+  padding: 18px;
+}
+
+canvas {
+  max-width: 100%;
+  max-height: calc(100vh - 36px);
+  width: auto;
+  height: auto;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  background: #111827;
+}

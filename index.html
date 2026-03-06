@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>对焦景深虚化工具（初版）</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main class="app">
+      <section class="panel">
+        <h1>对焦景深虚化工具（初版）</h1>
+
+        <label class="file-picker">
+          上传图片
+          <input id="imageInput" type="file" accept="image/*" />
+        </label>
+
+        <div class="controls">
+          <label>
+            虚化强度
+            <input id="blurStrength" type="range" min="1" max="5" step="0.01" value="2" />
+            <span id="blurStrengthVal">2（5px）</span>
+          </label>
+
+          <label>
+            对焦半径X
+            <input id="focusRadiusX" type="range" min="20" max="2600" value="260" />
+            <span id="focusRadiusXVal">260</span>
+          </label>
+
+          <label>
+            对焦半径Y
+            <input id="focusRadiusY" type="range" min="20" max="2600" value="220" />
+            <span id="focusRadiusYVal">220</span>
+          </label>
+
+          <label>
+            过渡宽度
+            <input id="falloff" type="range" min="20" max="3000" value="480" />
+            <span id="falloffVal">480</span>
+          </label>
+
+          <label>
+            透视影响
+            <input id="perspective" type="range" min="0" max="100" value="100" />
+            <span id="perspectiveVal">100%</span>
+          </label>
+
+          <label>
+            景深曲线偏移
+            <input id="depthCurveOffset" type="range" min="-100" max="100" value="100" />
+            <span id="depthCurveOffsetVal">100%</span>
+          </label>
+
+          <label class="inline">
+            <input id="enableBokeh" type="checkbox" />
+            启用背景高光 bokeh
+          </label>
+
+          <label>
+            光斑形状
+            <select id="bokehShape">
+              <option value="circle">圆形</option>
+              <option value="hex">六边形</option>
+            </select>
+          </label>
+
+          <label>
+            光斑强度
+            <input id="bokehIntensity" type="range" min="0" max="100" value="55" />
+            <span id="bokehIntensityVal">55%</span>
+          </label>
+
+          <label>
+            星芒强度
+            <input id="starburst" type="range" min="0" max="100" value="45" />
+            <span id="starburstVal">45%</span>
+          </label>
+
+          <label class="inline">
+            <input id="showGuides" type="checkbox" checked />
+            显示透视参考线
+          </label>
+        </div>
+
+        <div class="actions">
+          <button id="estimateVpBtn" type="button">自动估算透视点</button>
+          <button id="renderBtn" type="button">生成虚化效果</button>
+          <button id="downloadBtn" type="button" disabled>下载结果</button>
+        </div>
+
+        <p class="hint">操作：点击画布设置对焦点；按住 Shift 点击设置透视点（消失点）。高光较多（夜景、灯串）图片更容易出现明显光斑/星芒效果。</p>
+      </section>
+
+      <section class="canvas-wrap">
+        <canvas id="canvas" width="1200" height="800"></canvas>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
