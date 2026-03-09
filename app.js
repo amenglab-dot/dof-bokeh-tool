@@ -106,6 +106,241 @@ function sampleBilinear(imageData, width, height, x, y) {
   return out;
 }
 
+function solveLinearSystem(matrix, vector) {
+  const n = vector.length;
+  const a = matrix.map((row) => row.slice());
+  const b = vector.slice();
+
+  for (let i = 0; i < n; i++) {
+    let pivot = i;
+    let maxAbs = Math.abs(a[i][i]);
+    for (let r = i + 1; r < n; r++) {
+      const value = Math.abs(a[r][i]);
+      if (value > maxAbs) {
+        maxAbs = value;
+        pivot = r;
+      }
+    }
+    if (maxAbs < 1e-8) return null;
+
+    if (pivot !== i) {
+      [a[i], a[pivot]] = [a[pivot], a[i]];
+      [b[i], b[pivot]] = [b[pivot], b[i]];
+    }
+
+    const diag = a[i][i];
+    for (let c = i; c < n; c++) a[i][c] /= diag;
+    b[i] /= diag;
+
+    for (let r = 0; r < n; r++) {
+      if (r === i) continue;
+      const factor = a[r][i];
+      if (Math.abs(factor) < 1e-10) continue;
+      for (let c = i; c < n; c++) a[r][c] -= factor * a[i][c];
+      b[r] -= factor * b[i];
+    }
+  }
+
+  return b;
+}
+
+function computeHomography(quad, width, height) {
+  const rect = [
+    { x: 0, y: 0 },
+    { x: width - 1, y: 0 },
+    { x: 0, y: height - 1 },
+    { x: width - 1, y: height - 1 },
+  ];
+
+  const m = [];
+  const v = [];
+
+  for (let i = 0; i < 4; i++) {
+    const x = quad[i].x;
+    const y = quad[i].y;
+    const u = rect[i].x;
+    const w = rect[i].y;
+
+    m.push([x, y, 1, 0, 0, 0, -u * x, -u * y]);
+    v.push(u);
+    m.push([0, 0, 0, x, y, 1, -w * x, -w * y]);
+    v.push(w);
+  }
+
+  const h = solveLinearSystem(m, v);
+  if (!h) return null;
+  return [h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7], 1];
+}
+
+function applyHomography(h, x, y) {
+  const den = h[6] * x + h[7] * y + h[8];
+  if (Math.abs(den) < 1e-8) return null;
+  return {
+    x: (h[0] * x + h[1] * y + h[2]) / den,
+    y: (h[3] * x + h[4] * y + h[5]) / den,
+  };
+}
+
+function buildOrthoQuad(width, height, orthoXPct, orthoYPct) {
+  const kx = clamp(orthoXPct, -100, 100) / 100;
+  const ky = clamp(orthoYPct, -100, 100) / 100;
+
+  const xTopInset = Math.max(0, kx) * width * 0.36;
+  const xBottomInset = Math.max(0, -kx) * width * 0.36;
+  const yLeftInset = Math.max(0, ky) * height * 0.36;
+  const yRightInset = Math.max(0, -ky) * height * 0.36;
+
+  return [
+    { x: xTopInset, y: yLeftInset },
+    { x: width - 1 - xTopInset, y: yRightInset },
+    { x: xBottomInset, y: height - 1 - yLeftInset },
+    { x: width - 1 - xBottomInset, y: height - 1 - yRightInset },
+  ];
+}
+
+function renderOrthographicWarp(src, width, height, out, orthoXPct, orthoYPct, rotateDeg, fastMode = false) {
+  const quad = buildOrthoQuad(width, height, orthoXPct, orthoYPct);
+  const homography = computeHomography(quad, width, height);
+  if (!homography) {
+    for (let i = 0; i < out.data.length; i++) out.data[i] = src.data[i] || 0;
+    return;
+  }
+
+  const centerX = (width - 1) / 2;
+  const centerY = (height - 1) / 2;
+  const rot = (rotateDeg * Math.PI) / 180;
+  const cosR = Math.cos(-rot);
+  const sinR = Math.sin(-rot);
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const dx = x - centerX;
+      const dy = y - centerY;
+      const unrotX = dx * cosR - dy * sinR + centerX;
+      const unrotY = dx * sinR + dy * cosR + centerY;
+
+      const srcPoint = applyHomography(homography, unrotX, unrotY);
+      const idx = (y * width + x) * 4;
+
+      if (!srcPoint) {
+        out.data[idx] = 0;
+        out.data[idx + 1] = 0;
+        out.data[idx + 2] = 0;
+        out.data[idx + 3] = 255;
+        continue;
+      }
+
+      if (fastMode) {
+        const sx = clamp(Math.round(srcPoint.x), 0, width - 1);
+        const sy = clamp(Math.round(srcPoint.y), 0, height - 1);
+        const sidx = (sy * width + sx) * 4;
+        out.data[idx] = src.data[sidx];
+        out.data[idx + 1] = src.data[sidx + 1];
+        out.data[idx + 2] = src.data[sidx + 2];
+        out.data[idx + 3] = 255;
+      } else {
+        const rgba = sampleBilinear(src, width, height, srcPoint.x, srcPoint.y);
+        out.data[idx] = rgba[0];
+        out.data[idx + 1] = rgba[1];
+        out.data[idx + 2] = rgba[2];
+        out.data[idx + 3] = 255;
+      }
+    }
+  }
+}
+
+function normalizeAxisAngle(angleDeg) {
+  let angle = angleDeg % 180;
+  if (angle < 0) angle += 180;
+  return angle;
+}
+
+function signedHorizontalDeviation(angleDeg) {
+  let angle = normalizeAxisAngle(angleDeg);
+  if (angle > 90) angle -= 180;
+  return angle;
+}
+
+function analyzeRegionOrientation(imageData, width, height, x0, y0, x1, y1) {
+  const data = imageData.data;
+  const hist = new Float32Array(180);
+  let total = 0;
+
+  const sx = Math.max(1, Math.floor(x0));
+  const sy = Math.max(1, Math.floor(y0));
+  const ex = Math.min(width - 2, Math.ceil(x1));
+  const ey = Math.min(height - 2, Math.ceil(y1));
+
+  for (let y = sy; y <= ey; y++) {
+    for (let x = sx; x <= ex; x++) {
+      const i00 = (y * width + x) * 4;
+      const iL = (y * width + (x - 1)) * 4;
+      const iR = (y * width + (x + 1)) * 4;
+      const iT = ((y - 1) * width + x) * 4;
+      const iB = ((y + 1) * width + x) * 4;
+
+      const gL = 0.299 * data[iL] + 0.587 * data[iL + 1] + 0.114 * data[iL + 2];
+      const gR = 0.299 * data[iR] + 0.587 * data[iR + 1] + 0.114 * data[iR + 2];
+      const gT = 0.299 * data[iT] + 0.587 * data[iT + 1] + 0.114 * data[iT + 2];
+      const gB = 0.299 * data[iB] + 0.587 * data[iB + 1] + 0.114 * data[iB + 2];
+      const _gC = 0.299 * data[i00] + 0.587 * data[i00 + 1] + 0.114 * data[i00 + 2];
+
+      const gx = gR - gL;
+      const gy = gB - gT;
+      const mag = Math.hypot(gx, gy);
+      if (mag < 24) continue;
+
+      let lineAngle = (Math.atan2(gy, gx) * 180) / Math.PI + 90;
+      lineAngle = normalizeAxisAngle(lineAngle);
+      hist[Math.round(lineAngle) % 180] += mag;
+      total += mag;
+    }
+  }
+
+  if (total <= 1e-5) {
+    return {
+      verticalAngle: 90,
+      horizontalAngle: 0,
+      verticalDev: 0,
+      horizontalDev: 0,
+      verticalStrength: 0,
+      horizontalStrength: 0,
+    };
+  }
+
+  let vSumW = 0;
+  let vSumA = 0;
+  for (let a = 70; a <= 110; a++) {
+    const w = hist[a % 180];
+    vSumW += w;
+    vSumA += a * w;
+  }
+  const verticalAngle = vSumW > 1e-5 ? vSumA / vSumW : 90;
+
+  let hSumW = 0;
+  let hSumA = 0;
+  for (let a = 0; a <= 20; a++) {
+    const w = hist[a];
+    hSumW += w;
+    hSumA += a * w;
+  }
+  for (let a = 160; a <= 179; a++) {
+    const w = hist[a];
+    hSumW += w;
+    hSumA += (a - 180) * w;
+  }
+  const horizontalSigned = hSumW > 1e-5 ? hSumA / hSumW : 0;
+
+  return {
+    verticalAngle,
+    horizontalAngle: horizontalSigned < 0 ? horizontalSigned + 180 : horizontalSigned,
+    verticalDev: verticalAngle - 90,
+    horizontalDev: horizontalSigned,
+    verticalStrength: vSumW / total,
+    horizontalStrength: hSumW / total,
+  };
+}
+
 function applyOrthographicCorrection(reestimateVp = false) {
   if (!state.source) return;
 
@@ -114,91 +349,16 @@ function applyOrthographicCorrection(reestimateVp = false) {
   const src = state.source;
   const out = originalCtx.createImageData(width, height);
 
-  const kx = Number(orthoX.value) / 100;  // -1 to 1: horizontal trapezoid
-  const ky = Number(orthoY.value) / 100;  // -1 to 1: vertical trapezoid
-  const rot = (Number(orthoRotate.value) * Math.PI) / 180;
-
-  const centerX = (width - 1) / 2;
-  const centerY = (height - 1) / 2;
-
-  // Improved trapezoid perspective transform
-  // More aggressive perspective correction for better vertical/horizontal alignment
-  const perspectiveStrength = 0.50; // increased from 0.35 for more correction
-  const horizPerspective = kx * perspectiveStrength;
-  const vertPerspective = ky * perspectiveStrength;
-
-  // Create perspective transformation by moving corners
-  // kx > 0: top narrower (top leans in); kx < 0: bottom narrower (bottom leans in)
-  // ky > 0: left narrower (left leans in); ky < 0: right narrower (right leans in)
-  const srcCorners = [
-    { x: 0, y: 0 },                    // top-left
-    { x: width - 1, y: 0 },            // top-right
-    { x: 0, y: height - 1 },           // bottom-left
-    { x: width - 1, y: height - 1 },   // bottom-right
-  ];
-
-  // Apply perspective by scaling corners toward/away from center
-  const dstCorners = [
-    {
-      x: 0 + vertPerspective * width * 0.30,
-      y: 0 - horizPerspective * height * 0.30,
-    },
-    {
-      x: width - 1 - vertPerspective * width * 0.30,
-      y: 0 + horizPerspective * height * 0.30,
-    },
-    {
-      x: 0 - vertPerspective * width * 0.30,
-      y: height - 1 + horizPerspective * height * 0.30,
-    },
-    {
-      x: width - 1 + vertPerspective * width * 0.30,
-      y: height - 1 - horizPerspective * height * 0.30,
-    },
-  ];
-
-  const cosR = Math.cos(-rot);
-  const sinR = Math.sin(-rot);
-
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      // Bilinear interpolation within quad
-      const u = width > 1 ? x / (width - 1) : 0;
-      const v = height > 1 ? y / (height - 1) : 0;
-
-      const topLeft = dstCorners[0];
-      const topRight = dstCorners[1];
-      const botLeft = dstCorners[2];
-      const botRight = dstCorners[3];
-
-      // Bilinear interpolation
-      const top = {
-        x: topLeft.x * (1 - u) + topRight.x * u,
-        y: topLeft.y * (1 - u) + topRight.y * u,
-      };
-      const bot = {
-        x: botLeft.x * (1 - u) + botRight.x * u,
-        y: botLeft.y * (1 - u) + botRight.y * u,
-      };
-      const mapPos = {
-        x: top.x * (1 - v) + bot.x * v,
-        y: top.y * (1 - v) + bot.y * v,
-      };
-
-      // Apply rotation around center
-      const dx = mapPos.x - centerX;
-      const dy = mapPos.y - centerY;
-      const rotX = dx * cosR - dy * sinR + centerX;
-      const rotY = dx * sinR + dy * cosR + centerY;
-
-      const rgba = sampleBilinear(src, width, height, rotX, rotY);
-      const idx = (y * width + x) * 4;
-      out.data[idx] = rgba[0];
-      out.data[idx + 1] = rgba[1];
-      out.data[idx + 2] = rgba[2];
-      out.data[idx + 3] = 255;
-    }
-  }
+  renderOrthographicWarp(
+    src,
+    width,
+    height,
+    out,
+    Number(orthoX.value),
+    Number(orthoY.value),
+    Number(orthoRotate.value),
+    false
+  );
 
   originalCtx.putImageData(out, 0, 0);
   state.original = out;
@@ -231,126 +391,131 @@ function scheduleOrthoApply(reestimateVp = false) {
   }, 120);
 }
 
-function analyzeEdgeDirections(imageData, width, height) {
-  // Sobel edge detection + direction analysis
-  const data = imageData.data;
-  const sobelX = new Float32Array(width * height);
-  const sobelY = new Float32Array(width * height);
-  
-  // Sobel operators
-  const kernelX = [[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]];
-  const kernelY = [[-1, -2, -1], [0, 0, 0], [1, 2, 1]];
-  
-  for (let y = 1; y < height - 1; y++) {
-    for (let x = 1; x < width - 1; x++) {
-      let gx = 0, gy = 0;
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          const idx = ((y + dy) * width + (x + dx)) * 4;
-          const gray = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
-          gx += gray * kernelX[dy + 1][dx + 1];
-          gy += gray * kernelY[dy + 1][dx + 1];
-        }
-      }
-      sobelX[y * width + x] = gx;
-      sobelY[y * width + x] = gy;
-    }
-  }
-  
-  // Accumulate direction angles, focusing on strong edges
-  const angleHist = new Float32Array(180); // 0-179 degrees
-  const minMagnitude = 50; // minimum edge strength to consider
-  
-  for (let y = 1; y < height - 1; y++) {
-    for (let x = 1; x < width - 1; x++) {
-      const idx = y * width + x;
-      const gx = sobelX[idx];
-      const gy = sobelY[idx];
-      const mag = Math.hypot(gx, gy);
-      
-      if (mag > minMagnitude) {
-        // Get angle in 0-180 range (lines are symmetric)
-        let angle = Math.atan2(gy, gx) * (180 / Math.PI);
-        if (angle < 0) angle += 180;
-        if (angle >= 180) angle -= 180;
-        
-        const binIdx = Math.round(angle) % 180;
-        angleHist[binIdx] += mag / 255;
-      }
-    }
-  }
-  
-  // Find peaks: near-vertical (80-100°) and near-horizontal (0-20° or 160-180°)
-  const verticalRange = { start: 75, end: 105, peaks: [] };
-  const horizontalRange = { start: 0, end: 25, peaks: [] };
-  
-  for (let i = verticalRange.start; i < verticalRange.end; i++) {
-    if (angleHist[i] > 0.01) {
-      verticalRange.peaks.push({ angle: i, strength: angleHist[i] });
-    }
-  }
-  for (let i = horizontalRange.start; i < horizontalRange.end; i++) {
-    if (angleHist[i] > 0.01) {
-      horizontalRange.peaks.push({ angle: i, strength: angleHist[i] });
-    }
-  }
-  for (let i = 160; i < 180; i++) {
-    if (angleHist[i] > 0.01) {
-      horizontalRange.peaks.push({ angle: i, strength: angleHist[i] });
-    }
-  }
-  
-  // Find weighted average angle for vertical and horizontal
-  let verticalAngle = 90;
-  let horizontalAngle = 0;
-  
-  if (verticalRange.peaks.length > 0) {
-    const sum = verticalRange.peaks.reduce((a, p) => a + p.angle * p.strength, 0);
-    const totalStrength = verticalRange.peaks.reduce((a, p) => a + p.strength, 0);
-    verticalAngle = sum / totalStrength;
-  }
-  
-  if (horizontalRange.peaks.length > 0) {
-    const sum = horizontalRange.peaks.reduce((a, p) => a + p.angle * p.strength, 0);
-    const totalStrength = horizontalRange.peaks.reduce((a, p) => a + p.strength, 0);
-    horizontalAngle = sum / totalStrength;
-  }
-  
-  return { verticalAngle, horizontalAngle };
+function createOptimizationImageData(maxSide = 220) {
+  if (!state.source) return null;
+  const srcW = sourceCanvas.width;
+  const srcH = sourceCanvas.height;
+  const scale = Math.min(1, maxSide / Math.max(srcW, srcH));
+  const width = Math.max(80, Math.round(srcW * scale));
+  const height = Math.max(80, Math.round(srcH * scale));
+
+  const tempCanvas = document.createElement('canvas');
+  tempCanvas.width = width;
+  tempCanvas.height = height;
+  const tempCtx = tempCanvas.getContext('2d');
+
+  const srcCanvas = document.createElement('canvas');
+  srcCanvas.width = srcW;
+  srcCanvas.height = srcH;
+  const srcCtx = srcCanvas.getContext('2d');
+  srcCtx.putImageData(state.source, 0, 0);
+
+  tempCtx.drawImage(srcCanvas, 0, 0, width, height);
+  return tempCtx.getImageData(0, 0, width, height);
+}
+
+function evaluateOrthoParams(srcSmall, width, height, orthoXPct, orthoYPct, rotateDeg) {
+  const warped = new ImageData(width, height);
+  renderOrthographicWarp(srcSmall, width, height, warped, orthoXPct, orthoYPct, rotateDeg, true);
+
+  const full = analyzeRegionOrientation(warped, width, height, 0, 0, width - 1, height - 1);
+  const top = analyzeRegionOrientation(warped, width, height, 0, 0, width - 1, height * 0.36);
+  const bottom = analyzeRegionOrientation(warped, width, height, 0, height * 0.64, width - 1, height - 1);
+  const left = analyzeRegionOrientation(warped, width, height, 0, 0, width * 0.36, height - 1);
+  const right = analyzeRegionOrientation(warped, width, height, width * 0.64, 0, width - 1, height - 1);
+
+  const verticalParallel = Math.abs(top.verticalDev - bottom.verticalDev);
+  const horizontalParallel = Math.abs(left.horizontalDev - right.horizontalDev);
+  const verticalTilt = Math.abs(full.verticalDev);
+  const horizontalTilt = Math.abs(signedHorizontalDeviation(full.horizontalAngle));
+  const lowConfidencePenalty = Math.max(0, 0.06 - full.verticalStrength) * 80;
+
+  const score =
+    verticalTilt * 2.6 +
+    verticalParallel * 1.8 +
+    horizontalParallel * 1.2 +
+    horizontalTilt * 0.7 +
+    Math.abs(rotateDeg) * 0.05 +
+    lowConfidencePenalty;
+
+  return {
+    score,
+    metrics: { full, top, bottom, left, right },
+  };
 }
 
 function autoOrthographicCorrection() {
-  if (!state.image || !state.original) return;
-  
-  const width = originalCanvas.width;
-  const height = originalCanvas.height;
-  const imageData = originalCtx.getImageData(0, 0, width, height);
-  
-  // Analyze edge directions to detect perspective distortion
-  const { verticalAngle, horizontalAngle } = analyzeEdgeDirections(imageData, width, height);
-  
-  // Calculate deviations from ideal angles
-  // Ideal: vertical = 90°, horizontal = 0°
-  const verticalDeviation = verticalAngle - 90; // negative: tilted left, positive: tilted right
-  const horizontalDeviation = horizontalAngle - 0;   // negative: tilted down, positive: tilted up
-  
-  // Convert angle deviations to orthographic correction parameters
-  // Rotation correction handled separately
-  const rotationDegrees = -verticalDeviation * 0.5; // gentle rotation correction
-  
-  // For perspective trapezoid correction:
-  // If verticals tilt right (positive deviation), apply negative X correction (top-left trapezoid)
-  // If horizontals tilt up (positive deviation), apply negative Y correction (left narrower)
-  const perspectiveScale = 60;
-  
-  const autoOrthoX = clamp(-verticalDeviation * perspectiveScale / 90, -100, 100);
-  const autoOrthoY = clamp(-horizontalDeviation * perspectiveScale / 90, -100, 100);
-  const autoRotate = clamp(rotationDegrees, -15, 15);
-  
-  orthoX.value = autoOrthoX.toFixed(1);
-  orthoY.value = autoOrthoY.toFixed(1);
-  orthoRotate.value = autoRotate.toFixed(1);
-  
+  if (!state.source) return;
+
+  const small = createOptimizationImageData(220);
+  if (!small) return;
+
+  const width = small.width;
+  const height = small.height;
+  const base = analyzeRegionOrientation(small, width, height, 0, 0, width - 1, height - 1);
+  const top = analyzeRegionOrientation(small, width, height, 0, 0, width - 1, height * 0.36);
+  const bottom = analyzeRegionOrientation(small, width, height, 0, height * 0.64, width - 1, height - 1);
+  const left = analyzeRegionOrientation(small, width, height, 0, 0, width * 0.36, height - 1);
+  const right = analyzeRegionOrientation(small, width, height, width * 0.64, 0, width - 1, height - 1);
+
+  const verticalPerspectiveDelta = top.verticalDev - bottom.verticalDev;
+  const horizontalPerspectiveDelta = left.horizontalDev - right.horizontalDev;
+
+  let initX = clamp(-verticalPerspectiveDelta * 2.4, -100, 100);
+  let initY = clamp(-horizontalPerspectiveDelta * 2.4, -100, 100);
+  let initR = clamp(-base.verticalDev * 0.92, -15, 15);
+
+  if (state.vp) {
+    const srcW = sourceCanvas.width;
+    const srcH = sourceCanvas.height;
+    const vpNx = (state.vp.x - srcW / 2) / (srcW / 2 || 1);
+    const vpNy = (state.vp.y - srcH / 2) / (srcH / 2 || 1);
+    initX = initX * 0.8 + clamp(-vpNy * 42, -100, 100) * 0.2;
+    initY = initY * 0.8 + clamp(-vpNx * 42, -100, 100) * 0.2;
+  }
+
+  let best = {
+    x: initX,
+    y: initY,
+    r: initR,
+    ...evaluateOrthoParams(small, width, height, initX, initY, initR),
+  };
+
+  const searchSteps = [20, 10, 5, 2.5];
+  for (const step of searchSteps) {
+    let improved = true;
+    while (improved) {
+      improved = false;
+      const candidates = [
+        { dx: -step, dy: 0, dr: 0 },
+        { dx: step, dy: 0, dr: 0 },
+        { dx: 0, dy: -step, dr: 0 },
+        { dx: 0, dy: step, dr: 0 },
+        { dx: 0, dy: 0, dr: -step * 0.25 },
+        { dx: 0, dy: 0, dr: step * 0.25 },
+        { dx: -step, dy: -step, dr: 0 },
+        { dx: step, dy: step, dr: 0 },
+        { dx: -step, dy: step, dr: 0 },
+        { dx: step, dy: -step, dr: 0 },
+      ];
+
+      for (const candidate of candidates) {
+        const nx = clamp(best.x + candidate.dx, -100, 100);
+        const ny = clamp(best.y + candidate.dy, -100, 100);
+        const nr = clamp(best.r + candidate.dr, -15, 15);
+        const result = evaluateOrthoParams(small, width, height, nx, ny, nr);
+        if (result.score < best.score - 0.03) {
+          best = { x: nx, y: ny, r: nr, ...result };
+          improved = true;
+        }
+      }
+    }
+  }
+
+  orthoX.value = best.x.toFixed(1);
+  orthoY.value = best.y.toFixed(1);
+  orthoRotate.value = best.r.toFixed(1);
+
   setLabelValues();
   applyOrthographicCorrection(true);
 }
