@@ -53,54 +53,34 @@
             <span id="depthCurveOffsetVal">100%</span>
           </label>
 
-          <label>
-            正交-水平
-            <input id="orthoX" type="range" min="-100" max="100" step="0.1" value="0" />
-            <span id="orthoXVal">0%</span>
-          </label>
-
-          <label>
-            正交-垂直
-            <input id="orthoY" type="range" min="-100" max="100" step="0.1" value="0" />
-            <span id="orthoYVal">0%</span>
-          </label>
-
-          <label>
-            正交-旋转
-            <input id="orthoRotate" type="range" min="-15" max="15" step="0.1" value="0" />
-            <span id="orthoRotateVal">0.0°</span>
-          </label>
-
-          <label class="inline">
-            <input id="enableBokeh" type="checkbox" />
-            启用背景高光 bokeh
-          </label>
-
-          <label>
-            光斑形状
-            <select id="bokehShape">
-              <option value="circle">圆形</option>
-              <option value="hex">六边形</option>
-            </select>
-          </label>
-
-          <label>
-            光斑强度
-            <input id="bokehIntensity" type="range" min="0" max="100" value="55" />
-            <span id="bokehIntensityVal">55%</span>
-          </label>
-
-          <label>
-            星芒强度
-            <input id="starburst" type="range" min="0" max="100" value="45" />
-            <span id="starburstVal">45%</span>
-          </label>
-
           <label class="inline">
             <input id="showGuides" type="checkbox" checked />
             显示透视参考线
           </label>
         </div>
+
+        <section class="control-group">
+          <h2>正交矫正</h2>
+          <div class="controls">
+            <label>
+              正交-水平
+              <input id="orthoX" type="range" min="-100" max="100" step="0.1" value="0" />
+              <span id="orthoXVal">0%</span>
+            </label>
+
+            <label>
+              正交-垂直
+              <input id="orthoY" type="range" min="-100" max="100" step="0.1" value="0" />
+              <span id="orthoYVal">0%</span>
+            </label>
+
+            <label>
+              正交-旋转
+              <input id="orthoRotate" type="range" min="-15" max="15" step="0.1" value="0" />
+              <span id="orthoRotateVal">0.0°</span>
+            </label>
+          </div>
+        </section>
 
         <div class="actions">
           <button id="autoOrthoBtn" type="button">一键正交矫正</button>
@@ -110,7 +90,7 @@
           <button id="downloadBtn" type="button" disabled>下载结果</button>
         </div>
 
-        <p class="hint">操作：点击画布设置对焦点；按住 Shift 点击设置透视点（消失点）。可先点“一键正交矫正”再做景深。高光较多（夜景、灯串）图片更容易出现明显光斑/星芒效果。</p>
+        <p class="hint">操作：点击画布设置对焦点；按住 Shift 点击设置透视点（消失点）。可先点“一键正交矫正”再做景深。</p>
       </section>
 
       <section class="canvas-wrap">

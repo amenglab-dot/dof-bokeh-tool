@@ -11,10 +11,6 @@ const depthCurveOffset = document.getElementById('depthCurveOffset');
 const orthoX = document.getElementById('orthoX');
 const orthoY = document.getElementById('orthoY');
 const orthoRotate = document.getElementById('orthoRotate');
-const enableBokeh = document.getElementById('enableBokeh');
-const bokehShape = document.getElementById('bokehShape');
-const bokehIntensity = document.getElementById('bokehIntensity');
-const starburst = document.getElementById('starburst');
 const showGuides = document.getElementById('showGuides');
 
 const blurStrengthVal = document.getElementById('blurStrengthVal');
@@ -26,8 +22,6 @@ const depthCurveOffsetVal = document.getElementById('depthCurveOffsetVal');
 const orthoXVal = document.getElementById('orthoXVal');
 const orthoYVal = document.getElementById('orthoYVal');
 const orthoRotateVal = document.getElementById('orthoRotateVal');
-const bokehIntensityVal = document.getElementById('bokehIntensityVal');
-const starburstVal = document.getElementById('starburstVal');
 
 const autoOrthoBtn = document.getElementById('autoOrthoBtn');
 const resetOrthoBtn = document.getElementById('resetOrthoBtn');
@@ -56,8 +50,6 @@ const blurredFarCanvas = document.createElement('canvas');
 const blurredFarCtx = blurredFarCanvas.getContext('2d');
 const blurredUltraCanvas = document.createElement('canvas');
 const blurredUltraCtx = blurredUltraCanvas.getContext('2d');
-const compositeCanvas = document.createElement('canvas');
-const compositeCtx = compositeCanvas.getContext('2d');
 
 function getBlurPixels() {
   return Number(blurStrength.value) * 2.5;
@@ -78,8 +70,6 @@ function setLabelValues() {
   orthoXVal.textContent = `${Number(orthoX.value).toFixed(1)}%`;
   orthoYVal.textContent = `${Number(orthoY.value).toFixed(1)}%`;
   orthoRotateVal.textContent = `${Number(orthoRotate.value).toFixed(1)}°`;
-  bokehIntensityVal.textContent = `${bokehIntensity.value}%`;
-  starburstVal.textContent = `${starburst.value}%`;
 }
 
 function sampleBilinear(imageData, width, height, x, y) {
@@ -593,101 +583,6 @@ function computeBlurMix(
   return clamp(Math.max(farMix, nearMix * 0.84), 0, 1);
 }
 
-function drawAperturePath(context, x, y, radius, shape) {
-  context.beginPath();
-  if (shape === 'hex') {
-    for (let i = 0; i < 6; i++) {
-      const ang = (-Math.PI / 2) + (i * Math.PI) / 3;
-      const px = x + Math.cos(ang) * radius;
-      const py = y + Math.sin(ang) * radius;
-      if (i === 0) context.moveTo(px, py);
-      else context.lineTo(px, py);
-    }
-    context.closePath();
-  } else {
-    context.arc(x, y, radius, 0, Math.PI * 2);
-  }
-}
-
-function applyBokehHighlights(outImageData, mixAccessor, strength) {
-  if (!enableBokeh.checked || strength <= 0 || !state.original) {
-    return outImageData;
-  }
-
-  const width = canvas.width;
-  const height = canvas.height;
-  compositeCanvas.width = width;
-  compositeCanvas.height = height;
-  compositeCtx.putImageData(outImageData, 0, 0);
-
-  const src = state.original.data;
-  const intensity = Number(bokehIntensity.value) / 100;
-  const star = Number(starburst.value) / 100;
-  const shape = bokehShape.value;
-
-  const step = Math.max(6, Math.round(18 - intensity * 10));
-  const threshold = 220 - intensity * 60;
-  const maxSprites = Math.max(250, Math.floor((width * height) / 18000));
-  let drawn = 0;
-
-  compositeCtx.save();
-  compositeCtx.globalCompositeOperation = 'screen';
-
-  for (let y = step; y < height - step; y += step) {
-    if (drawn >= maxSprites) break;
-    for (let x = step; x < width - step; x += step) {
-      if (drawn >= maxSprites) break;
-
-      const idx = (y * width + x) * 4;
-      const r = src[idx];
-      const g = src[idx + 1];
-      const b = src[idx + 2];
-      const luma = r * 0.2126 + g * 0.7152 + b * 0.0722;
-      if (luma < threshold) continue;
-
-      const mix = mixAccessor(x, y);
-      if (mix < 0.28) continue;
-
-      const jitter = ((x * 73856093) ^ (y * 19349663)) & 1023;
-      if (jitter % 3 !== 0) continue;
-
-      const radius = clamp((1.5 + strength * 0.16 + intensity * 7) * mix, 1.5, 24);
-      const alpha = clamp((luma - threshold) / 90, 0, 1) * (0.12 + intensity * 0.28) * mix;
-      const rr = clamp(r * 1.08 + 20, 0, 255);
-      const gg = clamp(g * 1.08 + 20, 0, 255);
-      const bb = clamp(b * 1.12 + 24, 0, 255);
-
-      compositeCtx.fillStyle = `rgba(${rr}, ${gg}, ${bb}, ${alpha.toFixed(3)})`;
-      drawAperturePath(compositeCtx, x, y, radius, shape);
-      compositeCtx.fill();
-
-      if (star > 0) {
-        const lineAlpha = alpha * (0.35 + star * 0.75);
-        const lineLen = radius * (1.8 + star * 2.8);
-        const lineWidth = Math.max(0.5, radius * 0.06);
-        compositeCtx.strokeStyle = `rgba(${rr}, ${gg}, ${bb}, ${lineAlpha.toFixed(3)})`;
-        compositeCtx.lineWidth = lineWidth;
-
-        const rayCount = shape === 'hex' ? 6 : 4;
-        for (let i = 0; i < rayCount; i++) {
-          const angle = (Math.PI * 2 * i) / rayCount + (shape === 'hex' ? 0 : Math.PI / 4);
-          const dx = Math.cos(angle) * lineLen;
-          const dy = Math.sin(angle) * lineLen;
-          compositeCtx.beginPath();
-          compositeCtx.moveTo(x - dx, y - dy);
-          compositeCtx.lineTo(x + dx, y + dy);
-          compositeCtx.stroke();
-        }
-      }
-
-      drawn += 1;
-    }
-  }
-
-  compositeCtx.restore();
-  return compositeCtx.getImageData(0, 0, width, height);
-}
-
 function fitCanvasToViewport() {
   if (!canvas.width || !canvas.height) return;
   const wrapper = document.querySelector('.canvas-wrap');
@@ -891,27 +786,7 @@ function renderDepthOfField() {
     }
   }
 
-  const finalImage = applyBokehHighlights(
-    out,
-    (x, y) =>
-      computeBlurMix(
-        x,
-        y,
-        fx,
-        fy,
-        vx,
-        vy,
-        radiusX,
-        radiusY,
-        smooth,
-        perspectiveFactor,
-        depthOffset,
-        metrics
-      ),
-    strength
-  );
-
-  state.rendered = finalImage;
+  state.rendered = out;
   redrawPreview();
   downloadBtn.disabled = false;
 }
@@ -992,7 +867,7 @@ canvas.addEventListener('click', (event) => {
   scheduleRender(true);
 });
 
-[blurStrength, focusRadiusX, focusRadiusY, falloff, perspective, depthCurveOffset, bokehIntensity, starburst].forEach((slider) => {
+[blurStrength, focusRadiusX, focusRadiusY, falloff, perspective, depthCurveOffset].forEach((slider) => {
   slider.addEventListener('input', () => {
     setLabelValues();
     redrawPreview();
@@ -1008,8 +883,6 @@ canvas.addEventListener('click', (event) => {
 });
 
 showGuides.addEventListener('change', redrawPreview);
-bokehShape.addEventListener('change', () => scheduleRender(true));
-enableBokeh.addEventListener('change', () => scheduleRender(true));
 autoOrthoBtn.addEventListener('click', autoOrthographicCorrection);
 resetOrthoBtn.addEventListener('click', () => {
   orthoX.value = '0';

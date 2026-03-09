@@ -84,6 +84,18 @@ h1 {
   gap: 8px;
 }
 
+.control-group {
+  margin: 4px 0 14px;
+  padding-top: 10px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.control-group h2 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
 .actions {
   display: grid;
   gap: 8px;
