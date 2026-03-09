@@ -53,6 +53,24 @@
             <span id="depthCurveOffsetVal">100%</span>
           </label>
 
+          <label>
+            正交-水平
+            <input id="orthoX" type="range" min="-100" max="100" step="0.1" value="0" />
+            <span id="orthoXVal">0%</span>
+          </label>
+
+          <label>
+            正交-垂直
+            <input id="orthoY" type="range" min="-100" max="100" step="0.1" value="0" />
+            <span id="orthoYVal">0%</span>
+          </label>
+
+          <label>
+            正交-旋转
+            <input id="orthoRotate" type="range" min="-15" max="15" step="0.1" value="0" />
+            <span id="orthoRotateVal">0.0°</span>
+          </label>
+
           <label class="inline">
             <input id="enableBokeh" type="checkbox" />
             启用背景高光 bokeh
@@ -85,12 +103,14 @@
         </div>
 
         <div class="actions">
+          <button id="autoOrthoBtn" type="button">一键正交矫正</button>
+          <button id="resetOrthoBtn" type="button">重置正交参数</button>
           <button id="estimateVpBtn" type="button">自动估算透视点</button>
           <button id="renderBtn" type="button">生成虚化效果</button>
           <button id="downloadBtn" type="button" disabled>下载结果</button>
         </div>
 
-        <p class="hint">操作：点击画布设置对焦点；按住 Shift 点击设置透视点（消失点）。高光较多（夜景、灯串）图片更容易出现明显光斑/星芒效果。</p>
+        <p class="hint">操作：点击画布设置对焦点；按住 Shift 点击设置透视点（消失点）。可先点“一键正交矫正”再做景深。高光较多（夜景、灯串）图片更容易出现明显光斑/星芒效果。</p>
       </section>
 
       <section class="canvas-wrap">

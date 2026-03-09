@@ -8,6 +8,9 @@ const focusRadiusY = document.getElementById('focusRadiusY');
 const falloff = document.getElementById('falloff');
 const perspective = document.getElementById('perspective');
 const depthCurveOffset = document.getElementById('depthCurveOffset');
+const orthoX = document.getElementById('orthoX');
+const orthoY = document.getElementById('orthoY');
+const orthoRotate = document.getElementById('orthoRotate');
 const enableBokeh = document.getElementById('enableBokeh');
 const bokehShape = document.getElementById('bokehShape');
 const bokehIntensity = document.getElementById('bokehIntensity');
@@ -20,9 +23,14 @@ const focusRadiusYVal = document.getElementById('focusRadiusYVal');
 const falloffVal = document.getElementById('falloffVal');
 const perspectiveVal = document.getElementById('perspectiveVal');
 const depthCurveOffsetVal = document.getElementById('depthCurveOffsetVal');
+const orthoXVal = document.getElementById('orthoXVal');
+const orthoYVal = document.getElementById('orthoYVal');
+const orthoRotateVal = document.getElementById('orthoRotateVal');
 const bokehIntensityVal = document.getElementById('bokehIntensityVal');
 const starburstVal = document.getElementById('starburstVal');
 
+const autoOrthoBtn = document.getElementById('autoOrthoBtn');
+const resetOrthoBtn = document.getElementById('resetOrthoBtn');
 const estimateVpBtn = document.getElementById('estimateVpBtn');
 const renderBtn = document.getElementById('renderBtn');
 const downloadBtn = document.getElementById('downloadBtn');
@@ -32,12 +40,16 @@ const state = {
   focusPoint: null,
   vp: null,
   original: null,
+  source: null,
   rendered: null,
   renderTimer: null,
+  orthoTimer: null,
 };
 
 const originalCanvas = document.createElement('canvas');
 const originalCtx = originalCanvas.getContext('2d');
+const sourceCanvas = document.createElement('canvas');
+const sourceCtx = sourceCanvas.getContext('2d');
 const blurredNearCanvas = document.createElement('canvas');
 const blurredNearCtx = blurredNearCanvas.getContext('2d');
 const blurredFarCanvas = document.createElement('canvas');
@@ -63,8 +75,143 @@ function setLabelValues() {
   falloffVal.textContent = falloff.value;
   perspectiveVal.textContent = `${perspective.value}%`;
   depthCurveOffsetVal.textContent = `${depthCurveOffset.value}%`;
+  orthoXVal.textContent = `${Number(orthoX.value).toFixed(1)}%`;
+  orthoYVal.textContent = `${Number(orthoY.value).toFixed(1)}%`;
+  orthoRotateVal.textContent = `${Number(orthoRotate.value).toFixed(1)}°`;
   bokehIntensityVal.textContent = `${bokehIntensity.value}%`;
   starburstVal.textContent = `${starburst.value}%`;
+}
+
+function sampleBilinear(imageData, width, height, x, y) {
+  const sx = clamp(x, 0, width - 1);
+  const sy = clamp(y, 0, height - 1);
+  const x0 = Math.floor(sx);
+  const y0 = Math.floor(sy);
+  const x1 = Math.min(width - 1, x0 + 1);
+  const y1 = Math.min(height - 1, y0 + 1);
+  const tx = sx - x0;
+  const ty = sy - y0;
+
+  const i00 = (y0 * width + x0) * 4;
+  const i10 = (y0 * width + x1) * 4;
+  const i01 = (y1 * width + x0) * 4;
+  const i11 = (y1 * width + x1) * 4;
+
+  const out = [0, 0, 0, 255];
+  for (let c = 0; c < 3; c++) {
+    const v0 = imageData.data[i00 + c] * (1 - tx) + imageData.data[i10 + c] * tx;
+    const v1 = imageData.data[i01 + c] * (1 - tx) + imageData.data[i11 + c] * tx;
+    out[c] = v0 * (1 - ty) + v1 * ty;
+  }
+  return out;
+}
+
+function applyOrthographicCorrection(reestimateVp = false) {
+  if (!state.source) return;
+
+  const width = sourceCanvas.width;
+  const height = sourceCanvas.height;
+  const src = state.source;
+  const out = originalCtx.createImageData(width, height);
+
+  const kx = Number(orthoX.value) / 100;
+  const ky = Number(orthoY.value) / 100;
+  const rot = (Number(orthoRotate.value) * Math.PI) / 180;
+
+  const xSkew = kx * width * 0.22;
+  const ySkew = ky * height * 0.22;
+
+  const tl = {
+    x: clamp(xSkew > 0 ? xSkew : 0, 0, width - 1),
+    y: clamp(ySkew > 0 ? ySkew : 0, 0, height - 1),
+  };
+  const tr = {
+    x: clamp(xSkew > 0 ? width - 1 : width - 1 + xSkew, 0, width - 1),
+    y: clamp(ySkew > 0 ? 0 : -ySkew, 0, height - 1),
+  };
+  const bl = {
+    x: clamp(xSkew > 0 ? 0 : -xSkew, 0, width - 1),
+    y: clamp(ySkew > 0 ? height - 1 : height - 1 + ySkew, 0, height - 1),
+  };
+  const br = {
+    x: clamp(xSkew > 0 ? width - 1 - xSkew : width - 1, 0, width - 1),
+    y: clamp(ySkew > 0 ? height - 1 - ySkew : height - 1, 0, height - 1),
+  };
+
+  const centerX = (width - 1) / 2;
+  const centerY = (height - 1) / 2;
+  const cosR = Math.cos(-rot);
+  const sinR = Math.sin(-rot);
+
+  for (let y = 0; y < height; y++) {
+    const v = height > 1 ? y / (height - 1) : 0;
+    const leftX = tl.x * (1 - v) + bl.x * v;
+    const leftY = tl.y * (1 - v) + bl.y * v;
+    const rightX = tr.x * (1 - v) + br.x * v;
+    const rightY = tr.y * (1 - v) + br.y * v;
+
+    for (let x = 0; x < width; x++) {
+      const u = width > 1 ? x / (width - 1) : 0;
+      const mapX = leftX * (1 - u) + rightX * u;
+      const mapY = leftY * (1 - u) + rightY * u;
+
+      const dx = mapX - centerX;
+      const dy = mapY - centerY;
+      const rotX = dx * cosR - dy * sinR + centerX;
+      const rotY = dx * sinR + dy * cosR + centerY;
+
+      const rgba = sampleBilinear(src, width, height, rotX, rotY);
+      const idx = (y * width + x) * 4;
+      out.data[idx] = rgba[0];
+      out.data[idx + 1] = rgba[1];
+      out.data[idx + 2] = rgba[2];
+      out.data[idx + 3] = 255;
+    }
+  }
+
+  originalCtx.putImageData(out, 0, 0);
+  state.original = out;
+
+  if (!state.focusPoint) {
+    state.focusPoint = { x: width / 2, y: height / 2 };
+  } else {
+    state.focusPoint.x = clamp(state.focusPoint.x, 0, width - 1);
+    state.focusPoint.y = clamp(state.focusPoint.y, 0, height - 1);
+  }
+
+  if (reestimateVp || !state.vp) {
+    estimateVanishingPoint();
+  } else {
+    state.vp.x = clamp(state.vp.x, 0, width - 1);
+    state.vp.y = clamp(state.vp.y, 0, height - 1);
+  }
+
+  redrawPreview();
+  scheduleRender(true);
+}
+
+function scheduleOrthoApply(reestimateVp = false) {
+  if (!state.source) return;
+  if (state.orthoTimer) clearTimeout(state.orthoTimer);
+
+  state.orthoTimer = setTimeout(() => {
+    state.orthoTimer = null;
+    applyOrthographicCorrection(reestimateVp);
+  }, 120);
+}
+
+function autoOrthographicCorrection() {
+  if (!state.original || !state.vp) return;
+  const width = canvas.width;
+  const height = canvas.height;
+  const offsetX = (state.vp.x - width / 2) / (width / 2 || 1);
+  const offsetY = (state.vp.y - height / 2) / (height / 2 || 1);
+
+  orthoX.value = clamp(-offsetX * 55, -100, 100).toFixed(1);
+  orthoY.value = clamp(-offsetY * 55, -100, 100).toFixed(1);
+  orthoRotate.value = '0.0';
+  setLabelValues();
+  applyOrthographicCorrection(true);
 }
 
 function depthMetrics(width, height, fx, fy, vx, vy) {
@@ -480,6 +627,8 @@ function fitImageToCanvas(img) {
 
   canvas.width = width;
   canvas.height = height;
+  sourceCanvas.width = width;
+  sourceCanvas.height = height;
   originalCanvas.width = width;
   originalCanvas.height = height;
   blurredNearCanvas.width = width;
@@ -489,9 +638,12 @@ function fitImageToCanvas(img) {
   blurredUltraCanvas.width = width;
   blurredUltraCanvas.height = height;
 
-  originalCtx.clearRect(0, 0, width, height);
-  originalCtx.drawImage(img, 0, 0, width, height);
+  sourceCtx.clearRect(0, 0, width, height);
+  sourceCtx.drawImage(img, 0, 0, width, height);
+  state.source = sourceCtx.getImageData(0, 0, width, height);
 
+  originalCtx.clearRect(0, 0, width, height);
+  originalCtx.putImageData(state.source, 0, 0);
   state.original = originalCtx.getImageData(0, 0, width, height);
   state.focusPoint = { x: width / 2, y: height / 2 };
   state.vp = { x: width / 2, y: height / 3 };
@@ -499,8 +651,7 @@ function fitImageToCanvas(img) {
   fitCanvasToViewport();
   estimateVanishingPoint();
   setLabelValues();
-  redrawPreview();
-  scheduleRender(true);
+  applyOrthographicCorrection(true);
 }
 
 imageInput.addEventListener('change', (event) => {
@@ -543,9 +694,24 @@ canvas.addEventListener('click', (event) => {
   });
 });
 
+[orthoX, orthoY, orthoRotate].forEach((slider) => {
+  slider.addEventListener('input', () => {
+    setLabelValues();
+    scheduleOrthoApply(false);
+  });
+});
+
 showGuides.addEventListener('change', redrawPreview);
 bokehShape.addEventListener('change', () => scheduleRender(true));
 enableBokeh.addEventListener('change', () => scheduleRender(true));
+autoOrthoBtn.addEventListener('click', autoOrthographicCorrection);
+resetOrthoBtn.addEventListener('click', () => {
+  orthoX.value = '0';
+  orthoY.value = '0';
+  orthoRotate.value = '0';
+  setLabelValues();
+  applyOrthographicCorrection(true);
+});
 estimateVpBtn.addEventListener('click', () => {
   estimateVanishingPoint();
   redrawPreview();
