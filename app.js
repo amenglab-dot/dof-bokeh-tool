@@ -381,13 +381,13 @@ function scheduleOrthoApply(reestimateVp = false) {
   }, 120);
 }
 
-function createOptimizationImageData(maxSide = 220) {
+function createOptimizationImageData(maxSide = 320) {
   if (!state.source) return null;
   const srcW = sourceCanvas.width;
   const srcH = sourceCanvas.height;
   const scale = Math.min(1, maxSide / Math.max(srcW, srcH));
-  const width = Math.max(80, Math.round(srcW * scale));
-  const height = Math.max(80, Math.round(srcH * scale));
+  const width = Math.max(100, Math.round(srcW * scale));
+  const height = Math.max(100, Math.round(srcH * scale));
 
   const tempCanvas = document.createElement('canvas');
   tempCanvas.width = width;
@@ -420,12 +420,14 @@ function evaluateOrthoParams(srcSmall, width, height, orthoXPct, orthoYPct, rota
   const horizontalTilt = Math.abs(signedHorizontalDeviation(full.horizontalAngle));
   const lowConfidencePenalty = Math.max(0, 0.06 - full.verticalStrength) * 80;
 
+  // Heavily prioritize absolute vertical alignment
+  const verticalStrengthBoost = Math.min(1.5, full.verticalStrength * 10);
   const score =
-    verticalTilt * 2.6 +
-    verticalParallel * 1.8 +
-    horizontalParallel * 1.2 +
-    horizontalTilt * 0.7 +
-    Math.abs(rotateDeg) * 0.05 +
+    verticalTilt * (4.8 + verticalStrengthBoost * 2.2) +
+    verticalParallel * 1.6 +
+    horizontalParallel * 1.0 +
+    horizontalTilt * 0.5 +
+    Math.abs(rotateDeg) * 0.04 +
     lowConfidencePenalty;
 
   return {
@@ -437,7 +439,7 @@ function evaluateOrthoParams(srcSmall, width, height, orthoXPct, orthoYPct, rota
 function autoOrthographicCorrection() {
   if (!state.source) return;
 
-  const small = createOptimizationImageData(220);
+  const small = createOptimizationImageData(320);
   if (!small) return;
 
   const width = small.width;
@@ -451,60 +453,92 @@ function autoOrthographicCorrection() {
   const verticalPerspectiveDelta = top.verticalDev - bottom.verticalDev;
   const horizontalPerspectiveDelta = left.horizontalDev - right.horizontalDev;
 
-  let initX = clamp(-verticalPerspectiveDelta * 2.4, -100, 100);
-  let initY = clamp(-horizontalPerspectiveDelta * 2.4, -100, 100);
-  let initR = clamp(-base.verticalDev * 0.92, -15, 15);
+  // Generate multiple start points for multi-start optimization
+  const startPoints = [];
+  
+  // Start point 1: based on edge analysis
+  const init1X = clamp(-verticalPerspectiveDelta * 2.4, -100, 100);
+  const init1Y = clamp(-horizontalPerspectiveDelta * 2.4, -100, 100);
+  const init1R = clamp(-base.verticalDev * 0.95, -15, 15);
+  startPoints.push({ x: init1X, y: init1Y, r: init1R });
 
+  // Start point 2: stronger rotation correction
+  const init2R = clamp(-base.verticalDev * 1.2, -15, 15);
+  startPoints.push({ x: init1X * 0.7, y: init1Y * 0.7, r: init2R });
+
+  // Start point 3: based on VP if available
   if (state.vp) {
     const srcW = sourceCanvas.width;
     const srcH = sourceCanvas.height;
     const vpNx = (state.vp.x - srcW / 2) / (srcW / 2 || 1);
     const vpNy = (state.vp.y - srcH / 2) / (srcH / 2 || 1);
-    initX = initX * 0.8 + clamp(-vpNy * 42, -100, 100) * 0.2;
-    initY = initY * 0.8 + clamp(-vpNx * 42, -100, 100) * 0.2;
+    const vpX = clamp(-vpNy * 45, -100, 100);
+    const vpY = clamp(-vpNx * 45, -100, 100);
+    startPoints.push({ x: vpX, y: vpY, r: init1R });
   }
 
-  let best = {
-    x: initX,
-    y: initY,
-    r: initR,
-    ...evaluateOrthoParams(small, width, height, initX, initY, initR),
-  };
+  // Start point 4: pure rotation focus
+  startPoints.push({ x: 0, y: 0, r: init1R });
 
-  const searchSteps = [20, 10, 5, 2.5];
-  for (const step of searchSteps) {
-    let improved = true;
-    while (improved) {
-      improved = false;
-      const candidates = [
-        { dx: -step, dy: 0, dr: 0 },
-        { dx: step, dy: 0, dr: 0 },
-        { dx: 0, dy: -step, dr: 0 },
-        { dx: 0, dy: step, dr: 0 },
-        { dx: 0, dy: 0, dr: -step * 0.25 },
-        { dx: 0, dy: 0, dr: step * 0.25 },
-        { dx: -step, dy: -step, dr: 0 },
-        { dx: step, dy: step, dr: 0 },
-        { dx: -step, dy: step, dr: 0 },
-        { dx: step, dy: -step, dr: 0 },
-      ];
+  // Start point 5: conservative correction
+  startPoints.push({ x: init1X * 0.4, y: init1Y * 0.4, r: init1R * 0.6 });
 
-      for (const candidate of candidates) {
-        const nx = clamp(best.x + candidate.dx, -100, 100);
-        const ny = clamp(best.y + candidate.dy, -100, 100);
-        const nr = clamp(best.r + candidate.dr, -15, 15);
-        const result = evaluateOrthoParams(small, width, height, nx, ny, nr);
-        if (result.score < best.score - 0.03) {
-          best = { x: nx, y: ny, r: nr, ...result };
-          improved = true;
+  let globalBest = null;
+
+  // Run optimization from each start point
+  for (const start of startPoints) {
+    let best = {
+      x: start.x,
+      y: start.y,
+      r: start.r,
+      ...evaluateOrthoParams(small, width, height, start.x, start.y, start.r),
+    };
+
+    const searchSteps = [18, 9, 4.5, 2.0, 1.0, 0.5];
+    for (const step of searchSteps) {
+      let improved = true;
+      let iterations = 0;
+      const maxIter = step > 4 ? 20 : 40;
+      
+      while (improved && iterations < maxIter) {
+        improved = false;
+        iterations++;
+        
+        const candidates = [
+          { dx: -step, dy: 0, dr: 0 },
+          { dx: step, dy: 0, dr: 0 },
+          { dx: 0, dy: -step, dr: 0 },
+          { dx: 0, dy: step, dr: 0 },
+          { dx: 0, dy: 0, dr: -step * 0.28 },
+          { dx: 0, dy: 0, dr: step * 0.28 },
+          { dx: -step, dy: -step, dr: 0 },
+          { dx: step, dy: step, dr: 0 },
+          { dx: -step, dy: step, dr: 0 },
+          { dx: step, dy: -step, dr: 0 },
+        ];
+
+        for (const candidate of candidates) {
+          const nx = clamp(best.x + candidate.dx, -100, 100);
+          const ny = clamp(best.y + candidate.dy, -100, 100);
+          const nr = clamp(best.r + candidate.dr, -15, 15);
+          const result = evaluateOrthoParams(small, width, height, nx, ny, nr);
+          if (result.score < best.score - 0.02) {
+            best = { x: nx, y: ny, r: nr, ...result };
+            improved = true;
+            break;
+          }
         }
       }
     }
+
+    if (!globalBest || best.score < globalBest.score) {
+      globalBest = best;
+    }
   }
 
-  orthoX.value = best.x.toFixed(1);
-  orthoY.value = best.y.toFixed(1);
-  orthoRotate.value = best.r.toFixed(1);
+  orthoX.value = globalBest.x.toFixed(1);
+  orthoY.value = globalBest.y.toFixed(1);
+  orthoRotate.value = globalBest.r.toFixed(1);
 
   setLabelValues();
   applyOrthographicCorrection(true);
