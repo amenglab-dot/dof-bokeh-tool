@@ -121,14 +121,15 @@ function applyOrthographicCorrection(reestimateVp = false) {
   const centerX = (width - 1) / 2;
   const centerY = (height - 1) / 2;
 
-  // Compute trapezoid corners for perspective correction
-  // kx > 0: top narrower (perspective from top), kx < 0: bottom narrower (perspective from bottom)
-  // ky > 0: left narrower (lean to right), ky < 0: right narrower (lean to left)
-  const trapezoidStrength = 0.35; // max perspective factor
-  const horizPerspective = kx * trapezoidStrength;
-  const vertPerspective = ky * trapezoidStrength;
+  // Improved trapezoid perspective transform
+  // More aggressive perspective correction for better vertical/horizontal alignment
+  const perspectiveStrength = 0.50; // increased from 0.35 for more correction
+  const horizPerspective = kx * perspectiveStrength;
+  const vertPerspective = ky * perspectiveStrength;
 
-  // Source corners in original image
+  // Create perspective transformation by moving corners
+  // kx > 0: top narrower (top leans in); kx < 0: bottom narrower (bottom leans in)
+  // ky > 0: left narrower (left leans in); ky < 0: right narrower (right leans in)
   const srcCorners = [
     { x: 0, y: 0 },                    // top-left
     { x: width - 1, y: 0 },            // top-right
@@ -136,12 +137,24 @@ function applyOrthographicCorrection(reestimateVp = false) {
     { x: width - 1, y: height - 1 },   // bottom-right
   ];
 
-  // Destination corners after perspective adjustment
+  // Apply perspective by scaling corners toward/away from center
   const dstCorners = [
-    { x: 0 + vertPerspective * width * 0.25, y: 0 - horizPerspective * height * 0.25 },
-    { x: width - 1 - vertPerspective * width * 0.25, y: 0 + horizPerspective * height * 0.25 },
-    { x: 0 - vertPerspective * width * 0.25, y: height - 1 + horizPerspective * height * 0.25 },
-    { x: width - 1 + vertPerspective * width * 0.25, y: height - 1 - horizPerspective * height * 0.25 },
+    {
+      x: 0 + vertPerspective * width * 0.30,
+      y: 0 - horizPerspective * height * 0.30,
+    },
+    {
+      x: width - 1 - vertPerspective * width * 0.30,
+      y: 0 + horizPerspective * height * 0.30,
+    },
+    {
+      x: 0 - vertPerspective * width * 0.30,
+      y: height - 1 + horizPerspective * height * 0.30,
+    },
+    {
+      x: width - 1 + vertPerspective * width * 0.30,
+      y: height - 1 - horizPerspective * height * 0.30,
+    },
   ];
 
   const cosR = Math.cos(-rot);
@@ -149,16 +162,16 @@ function applyOrthographicCorrection(reestimateVp = false) {
 
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      // Compute source coordinate using bilinear interpolation in quad
+      // Bilinear interpolation within quad
       const u = width > 1 ? x / (width - 1) : 0;
       const v = height > 1 ? y / (height - 1) : 0;
 
-      // Bilinear interpolation within quad
       const topLeft = dstCorners[0];
       const topRight = dstCorners[1];
       const botLeft = dstCorners[2];
       const botRight = dstCorners[3];
 
+      // Bilinear interpolation
       const top = {
         x: topLeft.x * (1 - u) + topRight.x * u,
         y: topLeft.y * (1 - u) + topRight.y * u,
@@ -218,35 +231,125 @@ function scheduleOrthoApply(reestimateVp = false) {
   }, 120);
 }
 
+function analyzeEdgeDirections(imageData, width, height) {
+  // Sobel edge detection + direction analysis
+  const data = imageData.data;
+  const sobelX = new Float32Array(width * height);
+  const sobelY = new Float32Array(width * height);
+  
+  // Sobel operators
+  const kernelX = [[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]];
+  const kernelY = [[-1, -2, -1], [0, 0, 0], [1, 2, 1]];
+  
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      let gx = 0, gy = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const idx = ((y + dy) * width + (x + dx)) * 4;
+          const gray = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
+          gx += gray * kernelX[dy + 1][dx + 1];
+          gy += gray * kernelY[dy + 1][dx + 1];
+        }
+      }
+      sobelX[y * width + x] = gx;
+      sobelY[y * width + x] = gy;
+    }
+  }
+  
+  // Accumulate direction angles, focusing on strong edges
+  const angleHist = new Float32Array(180); // 0-179 degrees
+  const minMagnitude = 50; // minimum edge strength to consider
+  
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      const idx = y * width + x;
+      const gx = sobelX[idx];
+      const gy = sobelY[idx];
+      const mag = Math.hypot(gx, gy);
+      
+      if (mag > minMagnitude) {
+        // Get angle in 0-180 range (lines are symmetric)
+        let angle = Math.atan2(gy, gx) * (180 / Math.PI);
+        if (angle < 0) angle += 180;
+        if (angle >= 180) angle -= 180;
+        
+        const binIdx = Math.round(angle) % 180;
+        angleHist[binIdx] += mag / 255;
+      }
+    }
+  }
+  
+  // Find peaks: near-vertical (80-100°) and near-horizontal (0-20° or 160-180°)
+  const verticalRange = { start: 75, end: 105, peaks: [] };
+  const horizontalRange = { start: 0, end: 25, peaks: [] };
+  
+  for (let i = verticalRange.start; i < verticalRange.end; i++) {
+    if (angleHist[i] > 0.01) {
+      verticalRange.peaks.push({ angle: i, strength: angleHist[i] });
+    }
+  }
+  for (let i = horizontalRange.start; i < horizontalRange.end; i++) {
+    if (angleHist[i] > 0.01) {
+      horizontalRange.peaks.push({ angle: i, strength: angleHist[i] });
+    }
+  }
+  for (let i = 160; i < 180; i++) {
+    if (angleHist[i] > 0.01) {
+      horizontalRange.peaks.push({ angle: i, strength: angleHist[i] });
+    }
+  }
+  
+  // Find weighted average angle for vertical and horizontal
+  let verticalAngle = 90;
+  let horizontalAngle = 0;
+  
+  if (verticalRange.peaks.length > 0) {
+    const sum = verticalRange.peaks.reduce((a, p) => a + p.angle * p.strength, 0);
+    const totalStrength = verticalRange.peaks.reduce((a, p) => a + p.strength, 0);
+    verticalAngle = sum / totalStrength;
+  }
+  
+  if (horizontalRange.peaks.length > 0) {
+    const sum = horizontalRange.peaks.reduce((a, p) => a + p.angle * p.strength, 0);
+    const totalStrength = horizontalRange.peaks.reduce((a, p) => a + p.strength, 0);
+    horizontalAngle = sum / totalStrength;
+  }
+  
+  return { verticalAngle, horizontalAngle };
+}
+
 function autoOrthographicCorrection() {
-  if (!state.image || !state.vp) return;
+  if (!state.image || !state.original) return;
   
-  const width = sourceCanvas.width;
-  const height = sourceCanvas.height;
+  const width = originalCanvas.width;
+  const height = originalCanvas.height;
+  const imageData = originalCtx.getImageData(0, 0, width, height);
   
-  // Infer perspective distortion from VP position
-  // VP offset from center indicates the direction and amount of perspective
-  const centerX = width / 2;
-  const centerY = height / 2;
+  // Analyze edge directions to detect perspective distortion
+  const { verticalAngle, horizontalAngle } = analyzeEdgeDirections(imageData, width, height);
   
-  const vpOffsetX = state.vp.x - centerX;
-  const vpOffsetY = state.vp.y - centerY;
+  // Calculate deviations from ideal angles
+  // Ideal: vertical = 90°, horizontal = 0°
+  const verticalDeviation = verticalAngle - 90; // negative: tilted left, positive: tilted right
+  const horizontalDeviation = horizontalAngle - 0;   // negative: tilted down, positive: tilted up
   
-  const normOffsetX = vpOffsetX / (centerX || 1);
-  const normOffsetY = vpOffsetY / (centerY || 1);
+  // Convert angle deviations to orthographic correction parameters
+  // Rotation correction handled separately
+  const rotationDegrees = -verticalDeviation * 0.5; // gentle rotation correction
   
-  // Convert VP offset to orthographic correction parameters
-  // If VP is to the left (negative offset), image leans right -> correct by moving left (negative orthoX)
-  // The correction should be proportional to the offset but with diminishing returns
-  const correctionScale = 65; // sensitivity factor
-  const vpInfluence = 0.8; // how much VP position influences auto-correction (0-1)
+  // For perspective trapezoid correction:
+  // If verticals tilt right (positive deviation), apply negative X correction (top-left trapezoid)
+  // If horizontals tilt up (positive deviation), apply negative Y correction (left narrower)
+  const perspectiveScale = 60;
   
-  let autoOrthoX = clamp(-normOffsetX * correctionScale * vpInfluence, -100, 100);
-  let autoOrthoY = clamp(-normOffsetY * correctionScale * vpInfluence, -100, 100);
+  const autoOrthoX = clamp(-verticalDeviation * perspectiveScale / 90, -100, 100);
+  const autoOrthoY = clamp(-horizontalDeviation * perspectiveScale / 90, -100, 100);
+  const autoRotate = clamp(rotationDegrees, -15, 15);
   
   orthoX.value = autoOrthoX.toFixed(1);
   orthoY.value = autoOrthoY.toFixed(1);
-  orthoRotate.value = '0.0';
+  orthoRotate.value = autoRotate.toFixed(1);
   
   setLabelValues();
   applyOrthographicCorrection(true);
