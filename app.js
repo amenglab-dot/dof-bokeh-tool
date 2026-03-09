@@ -114,49 +114,67 @@ function applyOrthographicCorrection(reestimateVp = false) {
   const src = state.source;
   const out = originalCtx.createImageData(width, height);
 
-  const kx = Number(orthoX.value) / 100;
-  const ky = Number(orthoY.value) / 100;
+  const kx = Number(orthoX.value) / 100;  // -1 to 1: horizontal trapezoid
+  const ky = Number(orthoY.value) / 100;  // -1 to 1: vertical trapezoid
   const rot = (Number(orthoRotate.value) * Math.PI) / 180;
-
-  const xSkew = kx * width * 0.22;
-  const ySkew = ky * height * 0.22;
-
-  const tl = {
-    x: clamp(xSkew > 0 ? xSkew : 0, 0, width - 1),
-    y: clamp(ySkew > 0 ? ySkew : 0, 0, height - 1),
-  };
-  const tr = {
-    x: clamp(xSkew > 0 ? width - 1 : width - 1 + xSkew, 0, width - 1),
-    y: clamp(ySkew > 0 ? 0 : -ySkew, 0, height - 1),
-  };
-  const bl = {
-    x: clamp(xSkew > 0 ? 0 : -xSkew, 0, width - 1),
-    y: clamp(ySkew > 0 ? height - 1 : height - 1 + ySkew, 0, height - 1),
-  };
-  const br = {
-    x: clamp(xSkew > 0 ? width - 1 - xSkew : width - 1, 0, width - 1),
-    y: clamp(ySkew > 0 ? height - 1 - ySkew : height - 1, 0, height - 1),
-  };
 
   const centerX = (width - 1) / 2;
   const centerY = (height - 1) / 2;
+
+  // Compute trapezoid corners for perspective correction
+  // kx > 0: top narrower (perspective from top), kx < 0: bottom narrower (perspective from bottom)
+  // ky > 0: left narrower (lean to right), ky < 0: right narrower (lean to left)
+  const trapezoidStrength = 0.35; // max perspective factor
+  const horizPerspective = kx * trapezoidStrength;
+  const vertPerspective = ky * trapezoidStrength;
+
+  // Source corners in original image
+  const srcCorners = [
+    { x: 0, y: 0 },                    // top-left
+    { x: width - 1, y: 0 },            // top-right
+    { x: 0, y: height - 1 },           // bottom-left
+    { x: width - 1, y: height - 1 },   // bottom-right
+  ];
+
+  // Destination corners after perspective adjustment
+  const dstCorners = [
+    { x: 0 + vertPerspective * width * 0.25, y: 0 - horizPerspective * height * 0.25 },
+    { x: width - 1 - vertPerspective * width * 0.25, y: 0 + horizPerspective * height * 0.25 },
+    { x: 0 - vertPerspective * width * 0.25, y: height - 1 + horizPerspective * height * 0.25 },
+    { x: width - 1 + vertPerspective * width * 0.25, y: height - 1 - horizPerspective * height * 0.25 },
+  ];
+
   const cosR = Math.cos(-rot);
   const sinR = Math.sin(-rot);
 
   for (let y = 0; y < height; y++) {
-    const v = height > 1 ? y / (height - 1) : 0;
-    const leftX = tl.x * (1 - v) + bl.x * v;
-    const leftY = tl.y * (1 - v) + bl.y * v;
-    const rightX = tr.x * (1 - v) + br.x * v;
-    const rightY = tr.y * (1 - v) + br.y * v;
-
     for (let x = 0; x < width; x++) {
+      // Compute source coordinate using bilinear interpolation in quad
       const u = width > 1 ? x / (width - 1) : 0;
-      const mapX = leftX * (1 - u) + rightX * u;
-      const mapY = leftY * (1 - u) + rightY * u;
+      const v = height > 1 ? y / (height - 1) : 0;
 
-      const dx = mapX - centerX;
-      const dy = mapY - centerY;
+      // Bilinear interpolation within quad
+      const topLeft = dstCorners[0];
+      const topRight = dstCorners[1];
+      const botLeft = dstCorners[2];
+      const botRight = dstCorners[3];
+
+      const top = {
+        x: topLeft.x * (1 - u) + topRight.x * u,
+        y: topLeft.y * (1 - u) + topRight.y * u,
+      };
+      const bot = {
+        x: botLeft.x * (1 - u) + botRight.x * u,
+        y: botLeft.y * (1 - u) + botRight.y * u,
+      };
+      const mapPos = {
+        x: top.x * (1 - v) + bot.x * v,
+        y: top.y * (1 - v) + bot.y * v,
+      };
+
+      // Apply rotation around center
+      const dx = mapPos.x - centerX;
+      const dy = mapPos.y - centerY;
       const rotX = dx * cosR - dy * sinR + centerX;
       const rotY = dx * sinR + dy * cosR + centerY;
 
@@ -201,15 +219,35 @@ function scheduleOrthoApply(reestimateVp = false) {
 }
 
 function autoOrthographicCorrection() {
-  if (!state.original || !state.vp) return;
-  const width = canvas.width;
-  const height = canvas.height;
-  const offsetX = (state.vp.x - width / 2) / (width / 2 || 1);
-  const offsetY = (state.vp.y - height / 2) / (height / 2 || 1);
-
-  orthoX.value = clamp(-offsetX * 55, -100, 100).toFixed(1);
-  orthoY.value = clamp(-offsetY * 55, -100, 100).toFixed(1);
+  if (!state.image || !state.vp) return;
+  
+  const width = sourceCanvas.width;
+  const height = sourceCanvas.height;
+  
+  // Infer perspective distortion from VP position
+  // VP offset from center indicates the direction and amount of perspective
+  const centerX = width / 2;
+  const centerY = height / 2;
+  
+  const vpOffsetX = state.vp.x - centerX;
+  const vpOffsetY = state.vp.y - centerY;
+  
+  const normOffsetX = vpOffsetX / (centerX || 1);
+  const normOffsetY = vpOffsetY / (centerY || 1);
+  
+  // Convert VP offset to orthographic correction parameters
+  // If VP is to the left (negative offset), image leans right -> correct by moving left (negative orthoX)
+  // The correction should be proportional to the offset but with diminishing returns
+  const correctionScale = 65; // sensitivity factor
+  const vpInfluence = 0.8; // how much VP position influences auto-correction (0-1)
+  
+  let autoOrthoX = clamp(-normOffsetX * correctionScale * vpInfluence, -100, 100);
+  let autoOrthoY = clamp(-normOffsetY * correctionScale * vpInfluence, -100, 100);
+  
+  orthoX.value = autoOrthoX.toFixed(1);
+  orthoY.value = autoOrthoY.toFixed(1);
   orthoRotate.value = '0.0';
+  
   setLabelValues();
   applyOrthographicCorrection(true);
 }
