@@ -23,8 +23,29 @@ const orthoXVal = document.getElementById('orthoXVal');
 const orthoYVal = document.getElementById('orthoYVal');
 const orthoRotateVal = document.getElementById('orthoRotateVal');
 
+const adjBrightness = document.getElementById('adjBrightness');
+const adjContrast = document.getElementById('adjContrast');
+const adjSaturation = document.getElementById('adjSaturation');
+const adjTemperature = document.getElementById('adjTemperature');
+const adjTint = document.getElementById('adjTint');
+const adjHighlights = document.getElementById('adjHighlights');
+const adjShadows = document.getElementById('adjShadows');
+const adjSharpen = document.getElementById('adjSharpen');
+const adjVignette = document.getElementById('adjVignette');
+
+const adjBrightnessVal = document.getElementById('adjBrightnessVal');
+const adjContrastVal = document.getElementById('adjContrastVal');
+const adjSaturationVal = document.getElementById('adjSaturationVal');
+const adjTemperatureVal = document.getElementById('adjTemperatureVal');
+const adjTintVal = document.getElementById('adjTintVal');
+const adjHighlightsVal = document.getElementById('adjHighlightsVal');
+const adjShadowsVal = document.getElementById('adjShadowsVal');
+const adjSharpenVal = document.getElementById('adjSharpenVal');
+const adjVignetteVal = document.getElementById('adjVignetteVal');
+
 const autoOrthoBtn = document.getElementById('autoOrthoBtn');
 const resetOrthoBtn = document.getElementById('resetOrthoBtn');
+const resetAdjBtn = document.getElementById('resetAdjBtn');
 const estimateVpBtn = document.getElementById('estimateVpBtn');
 const renderBtn = document.getElementById('renderBtn');
 const downloadBtn = document.getElementById('downloadBtn');
@@ -70,6 +91,15 @@ function setLabelValues() {
   orthoXVal.textContent = `${Number(orthoX.value).toFixed(1)}%`;
   orthoYVal.textContent = `${Number(orthoY.value).toFixed(1)}%`;
   orthoRotateVal.textContent = `${Number(orthoRotate.value).toFixed(1)}°`;
+  adjBrightnessVal.textContent = adjBrightness.value;
+  adjContrastVal.textContent = adjContrast.value;
+  adjSaturationVal.textContent = adjSaturation.value;
+  adjTemperatureVal.textContent = adjTemperature.value;
+  adjTintVal.textContent = adjTint.value;
+  adjHighlightsVal.textContent = adjHighlights.value;
+  adjShadowsVal.textContent = adjShadows.value;
+  adjSharpenVal.textContent = adjSharpen.value;
+  adjVignetteVal.textContent = adjVignette.value;
 }
 
 function sampleBilinear(imageData, width, height, x, y) {
@@ -824,9 +854,138 @@ function renderDepthOfField() {
     }
   }
 
-  state.rendered = out;
+  state.rendered = applyAdjustments(out);
   redrawPreview();
   downloadBtn.disabled = false;
+}
+
+function applyAdjustments(imageData) {
+  const brightness = Number(adjBrightness.value);
+  const contrast = Number(adjContrast.value);
+  const saturation = Number(adjSaturation.value);
+  const temperature = Number(adjTemperature.value);
+  const tint = Number(adjTint.value);
+  const highlights = Number(adjHighlights.value);
+  const shadows = Number(adjShadows.value);
+  const sharpenAmt = Number(adjSharpen.value);
+  const vignetteAmt = Number(adjVignette.value);
+
+  const hasAdj = brightness || contrast || saturation || temperature || tint || highlights || shadows || sharpenAmt || vignetteAmt;
+  if (!hasAdj) return imageData;
+
+  const { width, height } = canvas;
+  const src = imageData.data;
+  const out = new ImageData(width, height);
+  const dst = out.data;
+
+  // Pre-compute contrast factor
+  const cFactor = (259 * (contrast * 2.55 + 255)) / (255 * (259 - contrast * 2.55));
+
+  // Sharpen: build luminance and apply unsharp mask
+  let lumMap = null;
+  if (sharpenAmt > 0) {
+    lumMap = new Float32Array(width * height);
+    for (let i = 0; i < width * height; i++) {
+      const idx = i * 4;
+      lumMap[i] = src[idx] * 0.299 + src[idx + 1] * 0.587 + src[idx + 2] * 0.114;
+    }
+  }
+
+  const cx = width / 2;
+  const cy = height / 2;
+  const maxDist = Math.hypot(cx, cy);
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const idx = (y * width + x) * 4;
+      let r = src[idx];
+      let g = src[idx + 1];
+      let b = src[idx + 2];
+
+      // Brightness
+      if (brightness !== 0) {
+        const bAdj = brightness * 2.55;
+        r += bAdj;
+        g += bAdj;
+        b += bAdj;
+      }
+
+      // Contrast
+      if (contrast !== 0) {
+        r = cFactor * (r - 128) + 128;
+        g = cFactor * (g - 128) + 128;
+        b = cFactor * (b - 128) + 128;
+      }
+
+      // Highlights / Shadows
+      if (highlights !== 0 || shadows !== 0) {
+        const lum = r * 0.299 + g * 0.587 + b * 0.114;
+        const hFactor = highlights / 100;
+        const sFactor = shadows / 100;
+        // highlights affect bright pixels, shadows affect dark ones
+        const highlightMask = clamp((lum - 128) / 127, 0, 1);
+        const shadowMask = clamp((128 - lum) / 128, 0, 1);
+        const hAdj = hFactor * highlightMask * 60;
+        const sAdj = sFactor * shadowMask * 60;
+        r += hAdj + sAdj;
+        g += hAdj + sAdj;
+        b += hAdj + sAdj;
+      }
+
+      // Temperature (warm = +R -B, cool = -R +B)
+      if (temperature !== 0) {
+        const t = temperature * 0.6;
+        r += t;
+        b -= t;
+      }
+
+      // Tint (green-magenta shift)
+      if (tint !== 0) {
+        const t = tint * 0.5;
+        g += t;
+      }
+
+      // Saturation
+      if (saturation !== 0) {
+        const gray = r * 0.299 + g * 0.587 + b * 0.114;
+        const s = 1 + saturation / 100;
+        r = gray + (r - gray) * s;
+        g = gray + (g - gray) * s;
+        b = gray + (b - gray) * s;
+      }
+
+      // Sharpen (unsharp mask)
+      if (sharpenAmt > 0 && lumMap && x > 0 && x < width - 1 && y > 0 && y < height - 1) {
+        const i0 = y * width + x;
+        const lumCenter = lumMap[i0];
+        const lumAvg = (
+          lumMap[i0 - 1] + lumMap[i0 + 1] +
+          lumMap[i0 - width] + lumMap[i0 + width]
+        ) * 0.25;
+        const sharpEdge = (lumCenter - lumAvg) * (sharpenAmt / 25);
+        r += sharpEdge;
+        g += sharpEdge;
+        b += sharpEdge;
+      }
+
+      // Vignette
+      if (vignetteAmt > 0) {
+        const dx = (x - cx) / cx;
+        const dy = (y - cy) / cy;
+        const dist = Math.hypot(dx, dy);
+        const vFactor = 1 - clamp(dist * dist * (vignetteAmt / 70), 0, 0.85);
+        r *= vFactor;
+        g *= vFactor;
+        b *= vFactor;
+      }
+
+      dst[idx] = clamp(r, 0, 255);
+      dst[idx + 1] = clamp(g, 0, 255);
+      dst[idx + 2] = clamp(b, 0, 255);
+      dst[idx + 3] = 255;
+    }
+  }
+  return out;
 }
 
 function scheduleRender(immediate = false) {
@@ -913,6 +1072,13 @@ canvas.addEventListener('click', (event) => {
   });
 });
 
+[adjBrightness, adjContrast, adjSaturation, adjTemperature, adjTint, adjHighlights, adjShadows, adjSharpen, adjVignette].forEach((slider) => {
+  slider.addEventListener('input', () => {
+    setLabelValues();
+    scheduleRender();
+  });
+});
+
 [orthoX, orthoY, orthoRotate].forEach((slider) => {
   slider.addEventListener('input', () => {
     setLabelValues();
@@ -922,6 +1088,13 @@ canvas.addEventListener('click', (event) => {
 
 showGuides.addEventListener('change', redrawPreview);
 autoOrthoBtn.addEventListener('click', autoOrthographicCorrection);
+resetAdjBtn.addEventListener('click', () => {
+  [adjBrightness, adjContrast, adjSaturation, adjTemperature, adjTint, adjHighlights, adjShadows].forEach(s => s.value = '0');
+  adjSharpen.value = '0';
+  adjVignette.value = '0';
+  setLabelValues();
+  scheduleRender(true);
+});
 resetOrthoBtn.addEventListener('click', () => {
   orthoX.value = '0';
   orthoY.value = '0';

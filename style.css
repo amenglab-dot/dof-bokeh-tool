@@ -23,6 +23,8 @@ body {
   padding: 18px;
   border-right: 1px solid #e5e7eb;
   background: #ffffff;
+  overflow-y: auto;
+  max-height: 100vh;
 }
 
 h1 {
@@ -94,6 +96,47 @@ h1 {
   margin: 0 0 10px;
   font-size: 14px;
   font-weight: 600;
+}
+
+.fold {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  margin-bottom: 10px;
+}
+
+.fold > summary {
+  padding: 10px 12px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.fold > summary::-webkit-details-marker {
+  display: none;
+}
+
+.fold > summary::before {
+  content: '▶';
+  font-size: 10px;
+  transition: transform 0.15s;
+}
+
+.fold[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.fold > .controls {
+  padding: 0 12px 10px;
+  margin-bottom: 0;
+}
+
+.fold-actions {
+  padding: 0 12px 10px;
 }
 
 .actions {
