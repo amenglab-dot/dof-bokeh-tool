@@ -3,94 +3,145 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>对焦景深虚化工具（初版）</title>
+    <title>对焦景深虚化工具</title>
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
     <main class="app">
       <section class="panel">
-        <h1>对焦景深虚化工具（初版）</h1>
+        <h1>对焦景深虚化工具</h1>
 
         <label class="file-picker">
           上传图片
           <input id="imageInput" type="file" accept="image/*" />
         </label>
 
-        <div class="controls">
-          <label>
-            虚化强度
-            <input id="blurStrength" type="range" min="0" max="5" step="0.01" value="2" />
-            <span id="blurStrengthVal">2（5px）</span>
-          </label>
+        <details class="fold" open>
+          <summary>景深虚化</summary>
+          <div class="controls">
+            <label>
+              虚化强度
+              <input id="blurStrength" type="range" min="0" max="5" step="0.01" value="2" />
+              <span id="blurStrengthVal">2（5px）</span>
+            </label>
+            <label>
+              对焦半径X
+              <input id="focusRadiusX" type="range" min="20" max="2600" value="260" />
+              <span id="focusRadiusXVal">260</span>
+            </label>
+            <label>
+              对焦半径Y
+              <input id="focusRadiusY" type="range" min="20" max="2600" value="220" />
+              <span id="focusRadiusYVal">220</span>
+            </label>
+            <label>
+              过渡宽度
+              <input id="falloff" type="range" min="20" max="3000" value="480" />
+              <span id="falloffVal">480</span>
+            </label>
+            <label>
+              透视影响
+              <input id="perspective" type="range" min="0" max="100" value="100" />
+              <span id="perspectiveVal">100%</span>
+            </label>
+            <label>
+              景深曲线偏移
+              <input id="depthCurveOffset" type="range" min="-100" max="100" value="100" />
+              <span id="depthCurveOffsetVal">100%</span>
+            </label>
+            <label class="inline">
+              <input id="showGuides" type="checkbox" checked />
+              显示透视参考线
+            </label>
+          </div>
+        </details>
 
-          <label>
-            对焦半径X
-            <input id="focusRadiusX" type="range" min="20" max="2600" value="260" />
-            <span id="focusRadiusXVal">260</span>
-          </label>
-
-          <label>
-            对焦半径Y
-            <input id="focusRadiusY" type="range" min="20" max="2600" value="220" />
-            <span id="focusRadiusYVal">220</span>
-          </label>
-
-          <label>
-            过渡宽度
-            <input id="falloff" type="range" min="20" max="3000" value="480" />
-            <span id="falloffVal">480</span>
-          </label>
-
-          <label>
-            透视影响
-            <input id="perspective" type="range" min="0" max="100" value="100" />
-            <span id="perspectiveVal">100%</span>
-          </label>
-
-          <label>
-            景深曲线偏移
-            <input id="depthCurveOffset" type="range" min="-100" max="100" value="100" />
-            <span id="depthCurveOffsetVal">100%</span>
-          </label>
-
-          <label class="inline">
-            <input id="showGuides" type="checkbox" checked />
-            显示透视参考线
-          </label>
-        </div>
-
-        <section class="control-group">
-          <h2>正交矫正</h2>
+        <details class="fold">
+          <summary>正交矫正</summary>
           <div class="controls">
             <label>
               正交-水平
               <input id="orthoX" type="range" min="-100" max="100" step="0.1" value="0" />
               <span id="orthoXVal">0%</span>
             </label>
-
             <label>
               正交-垂直
               <input id="orthoY" type="range" min="-100" max="100" step="0.1" value="0" />
               <span id="orthoYVal">0%</span>
             </label>
-
             <label>
               正交-旋转
               <input id="orthoRotate" type="range" min="-15" max="15" step="0.1" value="0" />
               <span id="orthoRotateVal">0.0°</span>
             </label>
           </div>
-        </section>
+          <div class="actions fold-actions">
+            <button id="autoOrthoBtn" type="button">一键正交矫正</button>
+            <button id="resetOrthoBtn" type="button">重置正交参数</button>
+          </div>
+        </details>
+
+        <details class="fold">
+          <summary>图片美化</summary>
+          <div class="controls">
+            <label>
+              亮度
+              <input id="adjBrightness" type="range" min="-100" max="100" value="0" />
+              <span id="adjBrightnessVal">0</span>
+            </label>
+            <label>
+              对比度
+              <input id="adjContrast" type="range" min="-100" max="100" value="0" />
+              <span id="adjContrastVal">0</span>
+            </label>
+            <label>
+              饱和度
+              <input id="adjSaturation" type="range" min="-100" max="100" value="0" />
+              <span id="adjSaturationVal">0</span>
+            </label>
+            <label>
+              色温
+              <input id="adjTemperature" type="range" min="-100" max="100" value="0" />
+              <span id="adjTemperatureVal">0</span>
+            </label>
+            <label>
+              色调
+              <input id="adjTint" type="range" min="-100" max="100" value="0" />
+              <span id="adjTintVal">0</span>
+            </label>
+            <label>
+              高光
+              <input id="adjHighlights" type="range" min="-100" max="100" value="0" />
+              <span id="adjHighlightsVal">0</span>
+            </label>
+            <label>
+              阴影
+              <input id="adjShadows" type="range" min="-100" max="100" value="0" />
+              <span id="adjShadowsVal">0</span>
+            </label>
+            <label>
+              锐化
+              <input id="adjSharpen" type="range" min="0" max="100" value="0" />
+              <span id="adjSharpenVal">0</span>
+            </label>
+            <label>
+              暗角
+              <input id="adjVignette" type="range" min="0" max="100" value="0" />
+              <span id="adjVignetteVal">0</span>
+            </label>
+          </div>
+          <div class="actions fold-actions">
+            <button id="resetAdjBtn" type="button">重置美化参数</button>
+          </div>
+        </details>
 
         <div class="actions">
-          <button id="autoOrthoBtn" type="button">一键正交矫正</button>
-          <button id="resetOrthoBtn" type="button">重置正交参数</button>
           <button id="estimateVpBtn" type="button">自动估算透视点</button>
           <button id="renderBtn" type="button">生成虚化效果</button>
           <button id="downloadBtn" type="button" disabled>下载结果</button>
         </div>
 
-        <p class="hint">操作：点击画布设置对焦点；按住 Shift 点击设置透视点（消失点）。可先点“一键正交矫正”再做景深。</p>
+        <p class="hint">操作：点击画布设置对焦点；按住 Shift 点击设置透视点。可先点"一键正交矫正"再做景深。</p>
       </section>
 
       <section class="canvas-wrap">
