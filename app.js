@@ -778,6 +778,10 @@ function renderDepthOfField() {
       const radialBase = clamp((ellipseNorm - 1) / smoothNorm, 0, 1);
       const radialBlur = Math.pow(radialBase, 1.08);
 
+      // Depth blur is gated: zero inside the ellipse, ramps up outside.
+      // This ensures the focus ellipse interior is always sharp.
+      const depthGate = clamp((ellipseNorm - 1) / Math.max(0.1, smoothNorm * 0.5), 0, 1);
+
       const depthOnAxis = (x - vx) * metrics.axisX + (y - vy) * metrics.axisY;
       const depthNorm = (depthOnAxis - metrics.minDepth) / metrics.depthRange;
       const shiftedFocusDepthNorm = clamp(metrics.focusDepthNorm + depthOffset * 0.35, 0, 1);
@@ -790,8 +794,8 @@ function renderDepthOfField() {
       const axisGain = 1 - axisPenalty * 0.55;
 
       const perspectiveGain = 0.35 + perspectiveFactor * 1.2;
-      const farDepthBlur = clamp(Math.pow(farDelta * (1.4 + perspectiveGain * 1.4), 0.8), 0, 1);
-      const nearDepthBlur = clamp(Math.pow(nearDelta * (1.0 + perspectiveGain * 0.65), 0.95), 0, 1);
+      const farDepthBlur = clamp(Math.pow(farDelta * (1.4 + perspectiveGain * 1.4), 0.8), 0, 1) * depthGate;
+      const nearDepthBlur = clamp(Math.pow(nearDelta * (1.0 + perspectiveGain * 0.65), 0.95), 0, 1) * depthGate;
 
       const farMix = clamp(farDepthBlur * axisGain + radialBlur * (0.24 + perspectiveFactor * 0.25), 0, 1);
       const nearMix = clamp(nearDepthBlur * (0.62 + perspectiveFactor * 0.18) + radialBlur * 0.22, 0, 1);
